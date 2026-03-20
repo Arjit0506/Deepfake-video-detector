@@ -1,9 +1,8 @@
 import os
 from flask import Flask, request, jsonify
-import cv2
-import numpy as np
 import tempfile
 import sys
+import mimetypes
 
 app = Flask(__name__)
 
@@ -11,87 +10,70 @@ app = Flask(__name__)
 port = int(os.environ.get('PORT', 3000))
 
 # Analysis configuration
-MIN_BLURRINESS = 100.0
-MIN_RATIO = 0.3
-MAX_RATIO = 0.7
-MAX_FRAMES = 120
-FRAME_STEP = 3
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
 DEEPFAKE_THRESHOLD = 50.0
 
-def analyze_video(video_path: str) -> dict:
+def analyze_video_basic(video_path: str) -> dict:
     """
-    Analyze video for potential deepfake indicators using basic video analysis.
-    Returns a dict with keys: is_deepfake (bool), confidence (float), message (str).
+    Basic video analysis without OpenCV for serverless environments.
+    Analyzes file properties and metadata for potential deepfake indicators.
     """
-    cap = cv2.VideoCapture(video_path)
-    frame_count = 0
-    inconsistency_score = 0
-    processed_frames = 0
-
     try:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            # Downscale frame for faster processing
-            height, width = frame.shape[:2]
-            scale = 640.0 / max(height, width)
-            if scale < 1.0:
-                frame = cv2.resize(frame, (int(width * scale), int(height * scale)))
-
-            # Basic analysis without face detection
-            blurriness = cv2.Laplacian(frame, cv2.CV_64F).var()
-            
-            # Check for unusual blurriness or artifacts
-            if blurriness < MIN_BLURRINESS:
-                inconsistency_score += 1
-
-            # Check frame consistency using edge detection
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            edges = cv2.Canny(gray, 50, 150)
-            edge_density = np.sum(edges > 0) / (edges.shape[0] * edges.shape[1])
-            
-            # Unusual edge density might indicate artifacts
-            if edge_density > 0.1 or edge_density < 0.01:
-                inconsistency_score += 1
-
-            processed_frames += 1
-            frame_count += 1
-
-            if frame_count % FRAME_STEP != 0:
-                continue
-
-            if processed_frames >= MAX_FRAMES:
-                break
-    finally:
-        cap.release()
-
-    if processed_frames == 0:
+        # Get file properties
+        file_size = os.path.getsize(video_path)
+        
+        # Basic file-based analysis
+        analysis = {
+            "is_deepfake": False,
+            "confidence": 0.0,
+            "message": "Basic file analysis complete - OpenCV not available in serverless environment",
+            "file_info": {
+                "size_bytes": file_size,
+                "size_mb": round(file_size / (1024 * 1024), 2),
+                "analysis_type": "metadata_only"
+            },
+            "limitations": [
+                "OpenCV not available in serverless environment",
+                "Video frame analysis requires system libraries",
+                "Consider using VPS or container-based deployment for full analysis"
+            ]
+        }
+        
+        # Simple heuristic based on file size
+        if file_size > MAX_FILE_SIZE:
+            analysis["warnings"] = ["Large file size may affect analysis accuracy"]
+        
+        return analysis
+        
+    except Exception as e:
         return {
             "is_deepfake": False,
             "confidence": 0.0,
-            "message": "Could not analyze video - no frames found",
+            "message": f"Analysis failed: {str(e)}",
+            "error": True
         }
-
-    confidence = (inconsistency_score / processed_frames) * 100.0
-    is_deepfake = confidence > DEEPFAKE_THRESHOLD
-
-    return {
-        "is_deepfake": is_deepfake,
-        "confidence": round(confidence, 2),
-        "message": "Video analysis complete (basic mode)",
-    }
 
 @app.route('/')
 def home():
     return jsonify({
         "message": "Deepfake Video Detector API",
         "status": "running",
+        "environment": "serverless",
+        "capabilities": [
+            "File upload and validation",
+            "Basic metadata analysis",
+            "File size checking"
+        ],
+        "limitations": [
+            "OpenCV not available in serverless environment",
+            "No video frame analysis",
+            "No deepfake detection capabilities"
+        ],
         "endpoints": {
-            "analyze": "POST /api/analyze - Upload and analyze video for deepfake detection",
+            "analyze": "POST /api/analyze - Upload and analyze video file",
             "health": "GET /api/health - Health check"
-        }
+        },
+        "recommendation": "Deploy on VPS or container-based platform for full functionality"
     })
 
 @app.route('/api/analyze', methods=['POST'])
@@ -104,7 +86,7 @@ def analyze():
         if video.filename == '':
             return jsonify({'error': 'No video file selected'}), 400
             
-        if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
+        if not video.filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
             return jsonify({'error': 'Invalid file format'}), 400
         
         # Create temporary file for processing
@@ -113,7 +95,7 @@ def analyze():
             temp_path = temp_file.name
         
         try:
-            result = analyze_video(temp_path)
+            result = analyze_video_basic(temp_path)
             return jsonify(result)
         except Exception as e:
             return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
@@ -130,7 +112,10 @@ def health():
     return jsonify({
         "status": "healthy", 
         "message": "Deepfake detector API is running",
-        "python_version": sys.version
+        "environment": "serverless",
+        "python_version": sys.version,
+        "opencv_available": False,
+        "full_analysis": False
     })
 
 if __name__ == '__main__':
