@@ -1,7 +1,7 @@
 import os
 from flask import Flask, request, jsonify
+from detector.video_analysis import analyze_video
 import tempfile
-import mimetypes
 
 app = Flask(__name__)
 
@@ -27,39 +27,20 @@ def analyze():
     if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
         return jsonify({'error': 'Invalid file format'}), 400
     
-    # Basic file analysis without OpenCV
+    # Create temporary file for processing
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
+        video.save(temp_file.name)
+        temp_path = temp_file.name
+    
     try:
-        # Save file temporarily to get basic info
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
-            video.save(temp_file.name)
-            temp_path = temp_file.name
-        
-        # Get file size
-        file_size = os.path.getsize(temp_path)
-        
-        # Get MIME type
-        mime_type, _ = mimetypes.guess_type(video.filename)
-        
-        # Basic analysis based on file properties
-        analysis = {
-            "is_deepfake": False,
-            "confidence": 0.0,
-            "message": "Basic analysis complete - OpenCV not available on Vercel",
-            "file_info": {
-                "filename": video.filename,
-                "size_bytes": file_size,
-                "mime_type": mime_type,
-                "size_mb": round(file_size / (1024 * 1024), 2)
-            }
-        }
-        
-        # Clean up
-        os.unlink(temp_path)
-        
-        return jsonify(analysis)
-        
+        result = analyze_video(temp_path)
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 @app.route('/api/health')
 def health():
